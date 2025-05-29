@@ -55,7 +55,7 @@ def main(args):
     config_general['shapenet_path'] = os.path.join(parent, config_general['shapenet_path'])
     config_general['shapenet_core_path'] = os.path.join(parent, config_general['shapenet_core_path'])
     config_general['dataset_base_path'] = os.path.join(parent, config_general['dataset_base_path'])
-    config['data_folder'] = os.path.join(parent, config['data_folder'])
+    config['data_folder'] = os.path.join(parent, config['data_folder']) # data/ScanNet/preprocessed
 
     # Read MCSS config
     config_path = os.path.join(parent, "config/config_MCSS.yaml")
@@ -80,6 +80,7 @@ def main(args):
         if os.path.exists(pkl_out_path):
             continue
 
+        # ScanNet/preprocessed/{scene_name}/{scene_name}.pkl
         data_path = os.path.join(parent, config['data_folder'], scene_name, scene_name + '.pkl')
         if not os.path.exists(data_path):
             continue
@@ -87,7 +88,7 @@ def main(args):
         pkl_file = open(data_path, 'rb')
         scene_obj = pickle.load(pkl_file)
 
-        mesh_scene = prepare_scene_obj.prepare_scene(scene_obj)
+        mesh_scene = prepare_scene_obj.prepare_scene(scene_obj) # 里面仅用了scene_obj.scene_name
 
         # Save GT mesh in PyTorch3D coordinate system
         path_tmp = os.path.join(out_path, scene_name + '_mesh_py3D.ply')
@@ -218,7 +219,6 @@ def main(args):
                     transform_dict_tmp['translate_transform'] = translate_func
 
                 # synset_id = shapenet_category_dict.get(box_item.category_label)
-
                 obj_id = obj_id_list[cad_index]
                 # TODO use model path of normalized ShapeNet models, modify line below:
                 model_path = os.path.join(config_general['shapenet_core_path'], box_item.catid_cad, obj_id, 'models',
@@ -245,13 +245,17 @@ def main(args):
             del ret_obj
             del cad_transformations, transform_dict
 
+        # 仅包含背景
         mesh_full_bg = copy.deepcopy(mesh_scene)
         mesh_full_bg.remove_vertices_by_index(prepare_scene_obj.all_obj_idx_list)
         path_tmp = os.path.join(out_path, scene_name + '_mesh_full_bg.ply')
         tmp = o3d.io.write_triangle_mesh(path_tmp, mesh_full_bg)
 
+        # 仅输出所有
         if obj_mesh_all is not None:
-            tmp = o3d.io.write_triangle_mesh(os.path.join(out_path, scene_name + "_cad_retrieval.ply"), obj_mesh_all)
+            tmp = o3d.io.write_triangle_mesh(
+                os.path.join(out_path, scene_name + "_cad_retrieval.ply"), obj_mesh_all
+            )
 
 
 if __name__ == "__main__":

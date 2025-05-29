@@ -18,7 +18,7 @@ class ObjectAnnotation(object):
 
         self.transform3d = transform3d
         self.transform_dict = transform_dict
-        self.id_cad = id_cad
-        self.catid_cad = catid_cad
+        self.id_cad = id_cad       #
+        self.catid_cad = catid_cad # shapeNet中的类别id
         self.cad_symmetry = cad_symmetry
         self.is_in_scan2cad = is_in_scan2cad

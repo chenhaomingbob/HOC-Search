@@ -97,10 +97,35 @@ def main(args):
     else:
         device = 'cuda:' + str(torch.cuda.current_device())
 
-    shapenet_Scan2CAD_classes = ['trash bin', 'table', 'printer', 'basket', 'bookshelf', 'flowerpot',
-                                 'laptop', 'sofa', 'chair', 'file cabinet', 'display', 'bag', 'bathtub',
-                                 'cabinet', 'clock', 'bed', 'bench', 'stove', 'lamp', 'faucet', 'bowl',
-                                 'keyboard', 'piano', 'microwaves', 'dishwasher', 'washer', 'guitar']
+    shapenet_Scan2CAD_classes = [
+        'trash bin',
+        'table',
+        'printer',
+        'basket',
+        'bookshelf',
+        'flowerpot',
+        'laptop',
+        'sofa',
+        'chair',
+        'file cabinet',
+        'display',
+        'bag',
+        'bathtub',
+        'cabinet',
+        'clock',
+        'bed',
+        'bench',
+        'stove',
+        'lamp',
+        'faucet',
+        'bowl',
+        'keyboard',
+        'piano',
+        'microwaves',
+        'dishwasher',
+        'washer',
+        'guitar'
+    ]
 
     shapenet_path = os.path.join(parent, 'data', 'ShapeNet')
     shapenet_core_path = os.path.join(shapenet_path, 'ShapeNetCore.v2')

@@ -223,7 +223,6 @@ def main(args):
                 obj_id = obj_id_list[cad_index]
                 model_path = os.path.join(config_general['shapenet_core_path'], box_item.catid_cad, obj_id, 'models',
                                           'model_normalized.obj')
-
                 # noinspection PyTypeChecker
                 cad_save_path = os.path.join(out_folder, str(cad_index) + '_' +
                                              str(iteration_list[cad_index]) + '_' +
@@ -246,11 +245,13 @@ def main(args):
             del ret_obj
             del cad_transformations, transform_dict
 
+        # 仅包含背景
         mesh_full_bg = copy.deepcopy(mesh_scene)
         mesh_full_bg.remove_vertices_by_index(prepare_scene_obj.all_obj_idx_list)
         path_tmp = os.path.join(out_path, scene_name + '_mesh_full_bg.ply')
         tmp = o3d.io.write_triangle_mesh(path_tmp, mesh_full_bg)
 
+        # 仅输出所有
         if obj_mesh_all is not None:
             tmp = o3d.io.write_triangle_mesh(os.path.join(out_path, scene_name + "_cad_retrieval.ply"), obj_mesh_all)
 

@@ -300,6 +300,8 @@ class Prepare_Scene():
         n_views = self.config.getint('n_views')
         dataset_base_path = self.config_general['dataset_base_path']
 
+        # inst_seg_3d 来自scene mesh的id
+
         indices = np.where(inst_seg_3d == box_item.object_id)[0].tolist()
         self.all_obj_idx_list = self.all_obj_idx_list + indices
         inst_label = box_item.object_id
