@@ -136,7 +136,7 @@ def view_selection_new_pose(scene_name, tmesh, frame_id_pose_dict, new_intrinsic
         cull_backfaces=False
     )
     for frame_name, pose_dict in frame_id_pose_dict.items():
-
+        # print(frame_name, len(frame_id_pose_dict))
         frame_name_list.append(frame_name)
         intrinsics = new_intrinsics
 
@@ -200,6 +200,128 @@ def view_selection_new_pose(scene_name, tmesh, frame_id_pose_dict, new_intrinsic
 
     img_ary = np.asarray(img_list)
 
+    for label in inst_label_list:
+        view_params_dict = {}
+
+        mask = np.zeros_like(img_ary)
+        mask[img_ary == label] = 1
+        label_cnt = np.sum(mask, axis=(1, 2))
+        label_max = np.max(label_cnt)
+        label_norm = label_cnt / label_max
+        best_view_idx = np.where(label_norm > silhouette_thres)
+        if len(best_view_idx[0]) < 1:
+            best_view_idx = np.where(label_norm > 0.)
+
+        if len(best_view_idx[0]) < 4:
+            continue
+
+        if len(best_view_idx[0]) < max_views:
+            views = best_view_idx[0]
+        else:
+            views_select = np.linspace(0, len(best_view_idx[0]) - 1, max_views).astype(int)
+            views = best_view_idx[0][views_select].astype(int)
+        view_params_dict['views'] = views
+        view_params_dict['R'] = np.asarray(R_list)[views, :, :]
+        view_params_dict['T'] = np.asarray(T_list)[views, :]
+        view_params_dict['frame_ids'] = np.asarray(frame_name_list)[views].tolist()
+
+        view_params_dict['intrinsics'] = intrinsics
+        view_params_dict['dist_params'] = dist_params
+        view_selection_dict[int(label)] = view_params_dict
+
+    return view_selection_dict
+
+
+def view_selection_new_pose_arkit(scene_name, tmesh, frame_id_pose_dict, frame_id_intrinsic_dict, dist_params, img_scale, max_views,
+                            silhouette_thres, inst_label_list):
+    n_views = 1
+    height = 480. # 参考color
+    width = 640.
+
+    view_selection_dict = {}
+    img_list = []
+    img_path_list = []
+    depth_path_list = []
+    R_list = []
+    T_list = []
+    frame_name_list = []
+    path_list = []
+
+    raster_settings = RasterizationSettings(
+        image_size=(int(height * img_scale), int(width * img_scale)),
+        blur_radius=0.0,
+        faces_per_pixel=1,
+        bin_size=None,
+        perspective_correct=True,
+        clip_barycentric_coords=False,
+        cull_backfaces=False
+    )
+    from tqdm import tqdm
+    for frame_name, pose_dict in tqdm(frame_id_pose_dict.items()):
+        print(frame_name, len(frame_id_pose_dict))
+        frame_name_list.append(frame_name)
+        intrinsics = frame_id_intrinsic_dict[frame_name]
+
+        R_world_to_cam = pose_dict['R'].cpu().numpy()
+        T_world_to_cam = pose_dict['T'].cpu().numpy()
+
+        if R_world_to_cam is None or T_world_to_cam is None:
+            img_list.append(np.ones((int(height * img_scale), int(width * img_scale))) * -1)
+            depth_path_list.append('')
+            img_path_list.append('')
+            path_list.append('')
+            R_list.append(np.zeros((1, 3, 3), dtype=np.float64))
+            T_list.append(np.zeros((1, 3), dtype=np.float64))
+            continue
+
+        R_list.append(R_world_to_cam)
+        T_list.append(T_world_to_cam)
+
+        R = torch.tensor(R_world_to_cam).to(device)
+        T = torch.tensor(T_world_to_cam).to(device)
+
+        px, py = (intrinsics[0, 2] * img_scale), (intrinsics[1, 2] * img_scale)
+        principal_point = torch.tensor([px, py])[None].type(torch.FloatTensor).to(device)
+        principal_point = principal_point.repeat(n_views, 1)
+        fx, fy = ((intrinsics[0, 0] * img_scale)), ((intrinsics[1, 1] * img_scale))
+        focal_length = torch.tensor([fx, fy])[None].type(torch.FloatTensor).to(device)
+        focal_length = focal_length.repeat(n_views, 1)
+
+        cameras = PerspectiveCameras(
+            focal_length=focal_length,
+            principal_point=principal_point,
+            in_ndc=False,
+            device=device, T=T, R=R,
+            image_size=((int(height * img_scale), int(width * img_scale)),))
+
+        renderer = MeshRendererViewSelection(
+            rasterizer=MeshRasterizer(
+                cameras=cameras,
+                raster_settings=raster_settings
+            ),
+            shader=SimpleShader(
+                device=device,
+                cameras=cameras,
+            )
+        )
+        tmesh = tmesh.extend(n_views)
+        img, fragments = renderer(meshes_world=tmesh.to(device))
+        valid_pix = fragments.pix_to_face.repeat(1, 1, 1, 4)
+
+        img[valid_pix < 0] = -1.
+        img_ = img.cpu().detach().numpy()[0, :, :, 0]
+        img = np.round(img_ * np.max(inst_label_list))
+
+        # cv2.imshow('image window', img)
+        # # add wait key. window waits until user presses a key
+        # cv2.waitKey(0)
+        # # and finally destroy/close all open windows
+        # cv2.destroyAllWindows()
+        #
+        img_list.append(img) # 渲染图
+
+    img_ary = np.asarray(img_list)
+    # 遍历实例
     for label in inst_label_list:
         view_params_dict = {}
 
@@ -377,13 +499,17 @@ def main():
 
     for scene_cnt, scene_name in enumerate(scene_list):
         print(scene_name)
-
+        # 输出路径
         prepro_out_path = os.path.join(parent, 'output', 'scene_preprocessing', scene_name)
         os.makedirs(prepro_out_path, exist_ok=True)
 
+        # 输入路径
         mesh_path = os.path.join(scannetpp_path, data_folder, scene_name, 'scans', 'mesh_aligned_0.05.ply')
+        # semantic annotaion
         anno_json = os.path.join(scannetpp_path, data_folder, scene_name, 'scans', 'segments_anno.json')
+        #
         pose_json = os.path.join(scannetpp_path, data_folder, scene_name, 'iphone', 'pose_intrinsic_imu.json')
+        #
         colmap_path = os.path.join(scannetpp_path, data_folder, scene_name, 'iphone', 'colmap')
 
         if not os.path.exists(mesh_path) or not os.path.exists(anno_json) or not os.path.exists(pose_json):
@@ -423,7 +549,7 @@ def main():
         annotations = read_json(anno_json)
         mesh_o3d = o3d.io.read_triangle_mesh(mesh_path)
         mesh_o3d = alignPclMesh(mesh_o3d, T=T_mat)
-
+        # o3d.visualization.draw_geometries([pcd])
         tmesh = Meshes(
             verts=[torch.tensor(np.asarray(mesh_o3d.vertices)[:, :3].astype(np.float32))],
             faces=[torch.tensor(np.asarray(mesh_o3d.triangles))]
@@ -440,23 +566,24 @@ def main():
         valid_annotations = []
         valid_annotation_classes = []
 
+        #
         for annotation in annotations['segGroups']:
-            inst_id = annotation['objectId']
-            shapenet_cls_label = parse_cls_label(annotation['label'])
+            inst_id = annotation['objectId']  # 实例id
+            shapenet_cls_label = parse_cls_label(annotation['label'])  # scannetpp class -> shapnet class
             if shapenet_cls_label is None:
                 continue
 
             sem_label = list(MSEG_SEMANTIC_IDX2NAME.keys())[list(MSEG_SEMANTIC_IDX2NAME.values()).index(
-                shapenet_cls_label)]
+                shapenet_cls_label)] # 对应的语义标签
 
             color_id = inst_id
             color_id = color_id % COLOR_DETECTRON2.shape[0]
             pcl_color_instance[annotation['segments']] = COLOR_DETECTRON2[int(color_id), :]
             inst_label_map[annotation['segments']] = inst_id
-            inst_label_list.append(inst_id)
+            inst_label_list.append(inst_id) # 根据实例上色
 
             pcl_color_semantic[annotation['segments']] = COLOR_DETECTRON2[int(sem_label), :]
-            semantic_label_map[annotation['segments']] = int(sem_label)
+            semantic_label_map[annotation['segments']] = int(sem_label) # 根据语义上色
 
             valid_annotations.append(annotation)
             valid_annotation_classes.append(annotation['label'])
@@ -524,12 +651,12 @@ def main():
             scannetpp_cls_label = annotation['label']
             print(shapenet_cls_label)
 
-            obb = annotation['obb']
-            center = np.array(obb['centroid'])
-            rot = np.array(obb['normalizedAxes']).reshape(3, 3).T
-            extents = np.array(obb['axesLengths'])
+            obb = annotation['obb']  # bounding box
+            center = np.array(obb['centroid'])  # 中心坐标
+            rot = np.array(obb['normalizedAxes']).reshape(3, 3).T  # 归一化轴向
+            extents = np.array(obb['axesLengths'])  # 轴长度
             bbox = o3d.geometry.OrientedBoundingBox(center, rot, extents)
-            bbox.rotate(T_mat[0:3, 0:3], center=(0, 0, 0))
+            bbox.rotate(T_mat[0:3, 0:3], center=(0, 0, 0))  # 旋转到pytorch3d的坐标系
 
             box_final = get_corners_of_bb3d_no_index(bbox.R.T, bbox.extent / 2, bbox.center)
             center_final, basis_final, coeffs_final = get_bdb_from_corners(box_final)
@@ -550,11 +677,16 @@ def main():
                     if object_id in view_selection_dict:
                         view_params = view_selection_dict[object_id]
                         catid_cad = shapenet_category_dict[shapenet_cls_label]
-                        obj_instance = ObjectAnnotation(object_id, shapenet_cls_label, scannet_category_label=None,
-                                                        view_params=view_params,
-                                                        transform3d=transform3d, transform_dict=transform_dict,
-                                                        catid_cad=catid_cad,
-                                                        scan2cad_annotation_dict=annotation)
+                        obj_instance = ObjectAnnotation(
+                            object_id,
+                            shapenet_cls_label,
+                            scannet_category_label=None,
+                            view_params=view_params,
+                            transform3d=transform3d,
+                            transform_dict=transform_dict,
+                            catid_cad=catid_cad,
+                            scan2cad_annotation_dict=annotation
+                        )
 
                         obj_3d_list.append(obj_instance)
 
@@ -563,9 +695,14 @@ def main():
             print(object_id)
             print('---------------')
 
+        # 所有bbox
         bpaResult = o3d.io.write_triangle_mesh(os.path.join(prepro_out_path, 'bbox_all' + ".ply"),
                                                all_boxes_selected)
+        # mesh + bbox
+        bbox_and_mesh = o3d.io.write_triangle_mesh(os.path.join(prepro_out_path, 'mesh_py3d_with_bbox_all' + ".ply"),
+                                                   all_boxes_selected + mesh_o3d)
 
+        # 解析成特定格式，用于检索
         scene_obj = ScanNetAnnotation(scene_name, obj_3d_list, inst_label_map, scene_type=None)
 
         if scene_obj is not None:

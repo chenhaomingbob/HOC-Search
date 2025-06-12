@@ -245,7 +245,7 @@ def main(args):
             del ret_obj
             del cad_transformations, transform_dict
 
-        # 仅包含背景
+        # 移除物体后的结果
         mesh_full_bg = copy.deepcopy(mesh_scene)
         mesh_full_bg.remove_vertices_by_index(prepare_scene_obj.all_obj_idx_list)
         path_tmp = os.path.join(out_path, scene_name + '_mesh_full_bg.ply')

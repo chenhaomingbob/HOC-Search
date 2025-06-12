@@ -9,15 +9,18 @@ from HOC_search.ObjectRenderGame.ObjectRenderGame import ObjectRenderGame
 from HOC_search.ObjectRenderGame.ObjectRenderRefineGame import ObjectRenderRefineGame
 from HOC_search.ObjectRenderGame.ObjectRenderGameUnknownCategory import ObjectRenderGameUnknownCategory
 from HOC_search.ObjectRenderGame.ObjectsGameLogger.ObjectsGameLogger import ObjectsGameLogger
-from HOC_search.ObjectRenderGame.ObjectsGameLogger.ObjectsGameLoggerUnknownCategory import ObjectsGameLoggerUnknownCategory
+from HOC_search.ObjectRenderGame.ObjectsGameLogger.ObjectsGameLoggerUnknownCategory import \
+    ObjectsGameLoggerUnknownCategory
 from MonteScene.MonteCarloTreeSearch import MonteCarloSceneSearch
 from HOC_search.PoseRefinementModel import PoseRefineModel
 
+
 class CAD_Search_Algos(object):
 
-    def __init__(self,config,config_general,renderer,box_item,n_views,device,num_45_deg_rotations,mesh_obj,max_depth_GT,
-                 depth_bg,mask_GT, depth_GT, depth_sensor, mask_depth_valid_sensor,
-                 mask_depth_valid_render_GT,cad_transformations,mesh_bg,weights_dict,transform_dict=None):
+    def __init__(self, config, config_general, renderer, box_item, n_views, device, num_45_deg_rotations, mesh_obj,
+                 max_depth_GT,
+                 depth_bg, mask_GT, depth_GT, depth_sensor, mask_depth_valid_sensor,
+                 mask_depth_valid_render_GT, cad_transformations, mesh_bg, weights_dict, transform_dict=None):
 
         self.config = config
         self.config_general = config_general
@@ -33,11 +36,10 @@ class CAD_Search_Algos(object):
         self.num_45_deg_rotations = num_45_deg_rotations
         self.inter_optim_steps = config.getint('inter_optim_steps')
 
-
-        self.w_sil = weights_dict['weight_sil']#config.getfloat('weight_sil')
-        self.w_depth = weights_dict['weight_depth']#config.getfloat('weight_depth')
-        self.w_sensor = weights_dict['weight_sensor']#config.getfloat('weight_sensor')
-        self.w_chamfer = weights_dict['weight_chamfer']#config.getfloat('weight_chamfer')
+        self.w_sil = weights_dict['weight_sil']  # config.getfloat('weight_sil')
+        self.w_depth = weights_dict['weight_depth']  # config.getfloat('weight_depth')
+        self.w_sensor = weights_dict['weight_sensor']  # config.getfloat('weight_sensor')
+        self.w_chamfer = weights_dict['weight_chamfer']  # config.getfloat('weight_chamfer')
 
         self.num_sampled_points = config.getint('num_sampled_points')
         self.num_workers = config.getint('num_workers')
@@ -49,7 +51,6 @@ class CAD_Search_Algos(object):
         self.depth_bg = depth_bg.repeat_interleave(repeats=self.num_orientations_per_mesh * self.num_scales, dim=0)
         self.mask_GT = mask_GT.repeat_interleave(repeats=self.num_orientations_per_mesh * self.num_scales, dim=0)
         self.depth_GT = depth_GT.repeat_interleave(repeats=self.num_orientations_per_mesh * self.num_scales, dim=0)
-
 
         self.depth_sensor = depth_sensor
         self.mask_depth_valid_sensor = mask_depth_valid_sensor
@@ -68,17 +69,19 @@ class CAD_Search_Algos(object):
         else:
             self.num_mcss_iter = config.getint('num_mcss_iter')
 
-    def run_MCSS_search(self,obj_cluster_tree,config_mcss,log_path):
+    def run_MCSS_search(self, obj_cluster_tree, config_mcss, log_path):
 
         if self.num_45_deg_rotations == 3:
             use_45deg_rot = True
         else:
             use_45deg_rot = False
 
-        shapenet_dataset = ShapeNetCore_MCSS_45deg(self.shapenet_path, load_textures=False, synsets=self.box_item.catid_cad,
+        shapenet_dataset = ShapeNetCore_MCSS_45deg(self.shapenet_path, load_textures=False,
+                                                   synsets=self.box_item.catid_cad,
                                                    cls_label=self.box_item.category_label,
-                                             cad_transformations=self.cad_transformations, num_views=self.n_views,
-                                             num_sampled_points=self.num_sampled_points,use_45deg_rot=use_45deg_rot)
+                                                   cad_transformations=self.cad_transformations, num_views=self.n_views,
+                                                   num_sampled_points=self.num_sampled_points,
+                                                   use_45deg_rot=use_45deg_rot)
 
         points_GT_sampled = sample_points_from_meshes(self.mesh_obj, num_samples=self.num_sampled_points,
                                                       return_normals=False, return_textures=False)
@@ -126,7 +129,8 @@ class CAD_Search_Algos(object):
                                      settings=config_mcss.montescene)
 
         if self.num_mcss_iter >= len(shapenet_dataset.obj_ids) * self.num_scales * self.num_orientations_per_mesh:
-            mcts.settings.mcts.num_iters = len(shapenet_dataset.obj_ids) * self.num_scales * self.num_orientations_per_mesh - 1
+            mcts.settings.mcts.num_iters = len(
+                shapenet_dataset.obj_ids) * self.num_scales * self.num_orientations_per_mesh - 1
         else:
             mcts.settings.mcts.num_iters = self.num_mcss_iter
 
@@ -141,8 +145,7 @@ class CAD_Search_Algos(object):
 
         return loss_list, obj_id_list, orientation_list, iteration_list, game
 
-
-    def run_MCSS_search_unknown_category(self,obj_cluster_tree,config_mcss,log_path):
+    def run_MCSS_search_unknown_category(self, obj_cluster_tree, config_mcss, log_path):
 
         if self.num_45_deg_rotations == 3:
             use_45deg_rot = True
@@ -150,9 +153,11 @@ class CAD_Search_Algos(object):
             use_45deg_rot = False
 
         shapenet_dataset = ShapeNetCore_MCSS_45deg_unknown_category(self.shapenet_path, load_textures=False,
-                                                                    synsets=self.box_item.catid_cad,cls_label=None,
-                                             cad_transformations=self.cad_transformations, num_views=self.n_views,
-                                             num_sampled_points=self.num_sampled_points,use_45deg_rot=use_45deg_rot)
+                                                                    synsets=self.box_item.catid_cad, cls_label=None,
+                                                                    cad_transformations=self.cad_transformations,
+                                                                    num_views=self.n_views,
+                                                                    num_sampled_points=self.num_sampled_points,
+                                                                    use_45deg_rot=use_45deg_rot)
 
         points_GT_sampled = sample_points_from_meshes(self.mesh_obj, num_samples=self.num_sampled_points,
                                                       return_normals=False, return_textures=False)
@@ -208,13 +213,12 @@ class CAD_Search_Algos(object):
         iteration_list = game.all_mcts_results_dict['iteration_list']
         category_list = game.all_mcts_results_dict['category_list']
 
-        loss_list, obj_id_list, orientation_list, iteration_list,category_list = \
-            zip(*sorted(zip(loss_list, obj_id_list, orientation_list, iteration_list,category_list), reverse=True))
+        loss_list, obj_id_list, orientation_list, iteration_list, category_list = \
+            zip(*sorted(zip(loss_list, obj_id_list, orientation_list, iteration_list, category_list), reverse=True))
 
         return loss_list, obj_id_list, orientation_list, iteration_list, category_list, game
 
-
-    def run_MCSS_search_refine(self,obj_cluster_tree,config_mcss,log_path,depth_out_path):
+    def run_MCSS_search_refine(self, obj_cluster_tree, config_mcss, log_path, depth_out_path):
 
         if self.num_45_deg_rotations == 3:
             use_45deg_rot = True
@@ -224,8 +228,10 @@ class CAD_Search_Algos(object):
         shapenet_dataset = ShapeNetCore_MCSS_45deg(self.shapenet_path, load_textures=False,
                                                    synsets=self.box_item.catid_cad,
                                                    cls_label=self.box_item.category_label,
-                                             cad_transformations=self.cad_transformations, num_views=self.n_views,
-                                             num_sampled_points=self.num_sampled_points,use_45deg_rot=use_45deg_rot)
+                                                   cad_transformations=self.cad_transformations,
+                                                   num_views=self.n_views,
+                                                   num_sampled_points=self.num_sampled_points,
+                                                   use_45deg_rot=use_45deg_rot)
 
         # Initialize a model using the renderer, mesh and reference image
         model = PoseRefineModel(bg_mesh=self.mesh_bg, obj_mesh=None,
@@ -239,7 +245,6 @@ class CAD_Search_Algos(object):
                                 mask_depth_valid_sensor=self.mask_depth_valid_sensor,
                                 mask_depth_valid_render_GT=self.mask_depth_valid_render_GT,
                                 depth_out_path=depth_out_path)
-
 
         points_GT_sampled = sample_points_from_meshes(self.mesh_obj, num_samples=self.num_sampled_points,
                                                       return_normals=False, return_textures=False)
@@ -278,7 +283,6 @@ class CAD_Search_Algos(object):
         ex_config_dict['transform_dict'] = self.transform_dict
         ex_config_dict['inter_optim_steps'] = self.inter_optim_steps
 
-
         # # Instantiate Game
         game = ObjectRenderRefineGame(config_mcss, ex_config_dict)
 
@@ -302,8 +306,8 @@ class CAD_Search_Algos(object):
         rot_45deg_list = game.all_mcts_results_dict['deg_rot45_index_list']
         transform_list = game.all_mcts_results_dict['best_transform_list']
 
-        loss_list, obj_id_list, orientation_list, iteration_list,rot_45deg_list,transform_list = \
-            zip(*sorted(zip(loss_list, obj_id_list, orientation_list, iteration_list,rot_45deg_list,transform_list),
+        loss_list, obj_id_list, orientation_list, iteration_list, rot_45deg_list, transform_list = \
+            zip(*sorted(zip(loss_list, obj_id_list, orientation_list, iteration_list, rot_45deg_list, transform_list),
                         reverse=True))
 
-        return loss_list, obj_id_list, orientation_list, iteration_list,rot_45deg_list, transform_list, game
+        return loss_list, obj_id_list, orientation_list, iteration_list, rot_45deg_list, transform_list, game

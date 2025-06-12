@@ -56,6 +56,7 @@ class Prepare_Scene():
 
         return scene_list
 
+
     def load_scene_list(self):
 
         scenes_prepro_folder = os.path.join(self.config_general['dataset_base_path'], 'preprocessed')
@@ -118,6 +119,13 @@ class Prepare_Scene():
             mesh_scene = o3d.io.read_triangle_mesh(scene_path)
             mesh_scene = alignPclMesh(mesh_scene, T=T_mat)
 
+        elif dataset_name == 'ArkitScene':
+            T_mat = transform_ScanNet_to_py3D()
+            scene_path = os.path.join(self.config_general['dataset_base_path'], scene_obj.scene_name, 'mesh.ply')
+            mesh_scene = o3d.io.read_triangle_mesh(scene_path)
+            mesh_scene = alignPclMesh(mesh_scene, T=T_mat)
+
+
         else:
             assert False
 
@@ -125,6 +133,7 @@ class Prepare_Scene():
 
     def prepare_GT_data(self, scene_mesh, mesh_bg, renderer, n_views, device):
         with torch.no_grad():
+
             scene_mesh = scene_mesh.extend(n_views * self.config.getint('batch_size') * 1)
 
             fragments_gt = renderer(meshes_world=scene_mesh.to(device))
@@ -186,9 +195,156 @@ class Prepare_Scene():
         depth_imgs = []
 
         for depth_cnt, depth_frame_name in enumerate(frame_id_list):
+            # 关于这个物体的深度图
             depth_img_path_new = os.path.join(self.parent, 'data', self.dataset_name, 'data', scene_name, 'iphone',
                                               'depth',
                                               str(depth_frame_name) + '.png')
+
+            depth_img = load_depth_img(depth_img_path_new)
+            depth_imgs.append(depth_img)
+
+            depth_imgs_ary = np.asarray(depth_imgs)
+            depth_imgs_ary = np.expand_dims(depth_imgs_ary, axis=1)
+            depth_sensor = torch.from_numpy(depth_imgs_ary).to(self.device)
+
+        depth_sensor = depth_sensor.permute((0, 2, 3, 1)).to(self.device)
+        depth_sensor = torch.repeat_interleave(depth_sensor,
+                                               (self.num_scales *
+                                                len(self.rotations)), dim=0)
+        mask_depth_valid_sensor = torch.zeros_like(depth_sensor).to(self.device)
+        mask_depth_valid_sensor[depth_sensor > 0] = 1
+
+        depth_gt_tensor = None
+        depth_bg_tensor = None
+        mask_gt_tensor = None
+        mask_depth_valid_render_gt_tensor = None
+        mesh_bg_list = []
+
+        for view_cnt, (R_cnt, T_cnt) in enumerate(zip(R, T)):
+            R_cnt = np.expand_dims(R_cnt, axis=0)
+            T_cnt = np.expand_dims(T_cnt, axis=0)
+
+            renderer_scene = initialize_renderer_scannetpp(1, self.config.getfloat('img_scale'), R_cnt, T_cnt,
+                                                           intrinsics,
+                                                           radial_params,
+                                                           self.config.getint('batch_size'),
+                                                           1,
+                                                           self.device,
+                                                           self.config_general.getfloat('img_height'),
+                                                           self.config_general.getfloat('img_width'))
+
+            depth_gt, depth_bg, mask_gt, mask_depth_valid_render_gt, mesh_bg = self.prepare_GT_data(scene_mesh,
+                                                                                                    mesh_bg,
+                                                                                                    renderer_scene,
+                                                                                                    1,
+                                                                                                    self.device)
+
+            del renderer_scene
+
+            if depth_gt_tensor is None:
+                depth_gt_tensor = copy.deepcopy(depth_gt)
+                depth_bg_tensor = copy.deepcopy(depth_bg)
+                mask_gt_tensor = copy.deepcopy(mask_gt)
+                mask_depth_valid_render_gt_tensor = copy.deepcopy(mask_depth_valid_render_gt)
+            else:
+                depth_gt_tensor = torch.cat([depth_gt_tensor, depth_gt], dim=0)
+                depth_bg_tensor = torch.cat([depth_bg_tensor, depth_bg], dim=0)
+                mask_gt_tensor = torch.cat([mask_gt_tensor, mask_gt], dim=0)
+                mask_depth_valid_render_gt_tensor = torch.cat([mask_depth_valid_render_gt_tensor,
+                                                               mask_depth_valid_render_gt], dim=0)
+
+            mesh_bg_list.append(mesh_bg)
+
+        del scene_mesh
+        torch.cuda.empty_cache()
+
+        if self.config_general.getboolean('use_2d_inst_from_RGB') and box_item.use_2d_rgb_mask:
+            mask_list = []
+            mask_gt_tensor = None
+            if box_item.cls_name in self.config_general.getstruct('inst_seg_2d_labels_list'):
+                inst_seg_2d_path = os.path.join(scenes_prepro_folder, scene_name, 'mask2d_final')
+                # print(inst_seg_2d_path)
+                if not os.path.exists(inst_seg_2d_path):
+                    assert False
+                    return None
+
+                for frame_id in frame_id_list:
+                    mask = cv2.imread(
+                        os.path.join(inst_seg_2d_path, str(int(inst_label)) + '_' + str(frame_id) + '.png'))
+                    if mask is None:
+                        assert False
+
+                    mask[np.where(mask == 255)] = 1.
+                    mask_list.append(mask[:, :, 0])
+
+                mask_imgs_ary = np.asarray(mask_list)
+                mask_imgs_ary = np.expand_dims(mask_imgs_ary, axis=1)
+                masks_gt = torch.from_numpy(mask_imgs_ary).to(self.device)
+                masks_gt = F.interpolate(masks_gt,
+                                         scale_factor=(
+                                             self.config.getfloat('img_scale'), self.config.getfloat('img_scale')),
+                                         )
+                masks_gt = masks_gt.permute((0, 2, 3, 1)).to(self.device)
+                mask_gt_tensor = torch.repeat_interleave(masks_gt, (self.num_scales *
+                                                                    len(self.rotations)), dim=0)
+
+        mesh_bg_tensor = join_meshes_as_batch(mesh_bg_list)
+        max_depth_gt = torch.max(depth_gt_tensor)
+
+        renderer = initialize_renderer(n_views,
+                                       self.config.getfloat('img_scale'),
+                                       R, T, intrinsics,
+                                       self.config.getint('batch_size'),
+                                       len(self.rotations) * self.num_scales,
+                                       self.device,
+                                       self.config_general.getfloat('img_height'),
+                                       self.config_general.getfloat('img_width'))
+
+        return n_views, mesh_bg_tensor, renderer, depth_gt_tensor, depth_bg_tensor, mask_gt_tensor, \
+            mask_depth_valid_render_gt_tensor, \
+            max_depth_gt, mesh_obj, depth_sensor, mask_depth_valid_sensor
+
+    def prepare_box_item_for_rendering_arkitscene(self, box_item, indices_inst_seg, mesh_scene, scene_name, num_scales,
+                                                  rotations):
+
+        self.num_scales = num_scales
+        self.rotations = rotations
+
+        n_views = self.config.getint('n_views')
+        indices = indices_inst_seg
+        self.all_obj_idx_list = self.all_obj_idx_list + indices
+        inst_label = box_item.object_id
+
+        mesh_tmp = copy.deepcopy(mesh_scene)
+        mesh_bg, mesh_obj = cut_meshes(mesh_tmp, indices, inst_label, scene_name)
+        # convert open3d format to pytorch3d format
+        scene_mesh = Meshes(
+            verts=[torch.tensor(np.asarray(mesh_scene.vertices)).float()],
+            faces=[torch.tensor(np.asarray(mesh_scene.triangles))],
+        )
+
+        view_parameters = box_item.view_params
+
+        if len(view_parameters['views']) < n_views:
+            n_views = len(view_parameters['views'])
+
+        views_select = np.linspace(0, len(view_parameters['views']) - 1, n_views).astype(int)
+
+        R = view_parameters['R'][views_select].squeeze(axis=1)
+        T = view_parameters['T'][views_select].squeeze(axis=1)
+        intrinsics = view_parameters['intrinsics']
+
+        radial_params = view_parameters['dist_params']
+
+        frame_id_list = np.asarray(view_parameters['frame_ids'])[views_select].tolist()
+        depth_imgs = []
+
+        for depth_cnt, depth_frame_name in enumerate(frame_id_list):
+            # depth_img_path_new = os.path.join(self.parent, 'data', self.dataset_name, 'data', scene_name, 'iphone',
+            #                                   'depth',
+            #                                   str(depth_frame_name) + '.png')
+            depth_img_path_new = os.path.join(self.config_general['dataset_base_path'], scene_name,
+                                              'depth', str(depth_frame_name) + '.png')
 
             depth_img = load_depth_img(depth_img_path_new)
             depth_imgs.append(depth_img)
@@ -441,3 +597,21 @@ class Prepare_Scene():
         return n_views, mesh_bg_tensor, renderer, depth_gt_tensor, depth_bg_tensor, mask_gt_tensor, \
             mask_depth_valid_render_gt_tensor, \
             max_depth_gt, mesh_obj, depth_sensor, mask_depth_valid_sensor
+
+
+def save_pytorch3d_mesh(mesh: Meshes, filename: str):
+    # 获取顶点和面片数据
+    verts = mesh.verts_list()[0].cpu().numpy()
+    faces = mesh.faces_list()[0].cpu().numpy()
+
+    # 创建 Open3D TriangleMesh 并保存
+    o3d_mesh = o3d.geometry.TriangleMesh(
+        vertices=o3d.utility.Vector3dVector(verts),
+        triangles=o3d.utility.Vector3iVector(faces)
+    )
+
+    # 检查网格是否有效
+    if not o3d_mesh.has_vertices() or not o3d_mesh.has_triangles():
+        raise ValueError("Mesh does not have valid vertices or triangles.")
+
+    o3d.io.write_triangle_mesh(filename, o3d_mesh)
