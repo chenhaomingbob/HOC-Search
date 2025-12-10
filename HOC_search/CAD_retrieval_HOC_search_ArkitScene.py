@@ -13,9 +13,10 @@ parser.add_argument("--config", type=str,
                     default='ScanNetpp_HOC_Search.ini',
                     help="Path to configuration file")
 parser.add_argument("--data_split", type=str, default="", help="data split")
-parser.add_argument("--device", type=str, default="0", help="device")
+# parser.add_argument("--device", type=str, default="0", help="device")
+parser.add_argument("--scene_id", type=str, default="", help="Specify a single scene_id to process")
 
-os.environ["CUDA_VISIBLE_DEVICES"] = parser.parse_args().device
+# os.environ["CUDA_VISIBLE_DEVICES"] = parser.parse_args().device
 current = os.path.dirname(os.path.realpath(__file__))
 parent = os.path.dirname(current)
 sys.path.append(parent)
@@ -30,18 +31,22 @@ from HOC_search.utils_CAD_retrieval import compose_cad_transforms, load_textured
     load_textured_cad_model_normalized
 import open3d as o3d
 import copy
+import numpy as np
+import cv2
+
+np_list = []
 
 
 def main(args):
     # Setup
-    if args.device == '':
-        if torch.cuda.is_available():
-            device = torch.device("cuda:0")
-            torch.cuda.set_device(device)
-        else:
-            device = torch.device("cpu")
-    else:
-        device = 'cuda:' + str(torch.cuda.current_device())
+    # if args.device == '':
+    #     if torch.cuda.is_available():
+    #         device = torch.device("cuda:0")
+    #         torch.cuda.set_device(device)
+    #     else:
+    #         device = torch.device("cpu")
+    # else:
+    device = 'cuda:' + str(torch.cuda.current_device())
 
     config_path = os.path.join(parent, 'config', args.config)
     config = load_config(config_path)['CAD_retrieval']
@@ -67,12 +72,32 @@ def main(args):
 
     data_split = args.data_split
 
-
     prepare_scene_obj = Prepare_Scene(config, config_general, data_split, parent, device)
-    scene_list = prepare_scene_obj.load_scene_list_scannetpp()
+    # scene_list = prepare_scene_obj.load_scene_list_scannetpp()
 
+    if args.scene_id:
+        # 如果用户通过命令行指定了 scene_id，则只处理这一个
+        scene_list = [args.scene_id]
+        print(f"Processing single specified scene: {scene_list}")
+    else:
+        # 否则，按原计划加载所有场景列表
+        scene_list = prepare_scene_obj.load_scene_list_scannetpp()
+        print(f"Processing all {len(scene_list)} scenes found: {scene_list}")
+
+    print(scene_list)
+    # ['42444917', '42447258', '41048169', '41126514', '42444758', '42444913', '42899353', '42899920']
+    # 42444917
+    # 42447258 width = 480, height = 640  有问题
+    # 41048169 width = 480, height = 640  有问题
+    # 41126514 width = 640, height = 480  能正常运行
     for scene_cnt, scene_name in enumerate(scene_list):
         print(scene_name)
+        # if scene_name != '41048169':
+        # if scene_name != '41126514':
+        #     continue
+
+        if scene_name in ['41098086']:
+            continue
 
         out_path = os.path.join(config_general['dataset_base_path'], scene_name, 'intermediate', 'HOC_Search',
                                 'CAD_retrieval')
@@ -83,11 +108,27 @@ def main(args):
         if os.path.exists(pkl_out_path):
             continue
 
+        image_path = os.path.join(config_general['dataset_base_path'], scene_name, 'color', '000000.jpg')
+        rgb_image = cv2.imread(image_path)
+        h, w = rgb_image.shape[:2]
+        # print(h, w)
+        # if h != 480 or w != 640:
+        if h != int(config_general.getfloat('img_height')) or w != int(config_general.getfloat('img_width')):
+            print("height",h,int(config_general.getfloat('img_height')))
+            print("width",w,int(config_general.getfloat('img_width')))
+            print(1)
+            continue
+
         # data_path = os.path.join(parent, config['data_folder'], scene_name, scene_name + '.pkl')
-        data_path = os.path.join(config_general['dataset_base_path'], scene_name, 'intermediate', 'HOC_Search',
+        data_path = os.path.join(config_general['dataset_base_path'],
+                                 scene_name,
+                                 'intermediate',
+                                 'HOC_Search',
                                  scene_name + '.pkl')
         if not os.path.exists(data_path):
             continue
+
+        print(scene_name)
 
         pkl_file = open(data_path, 'rb')
         scene_obj = pickle.load(pkl_file)
@@ -99,6 +140,8 @@ def main(args):
         tmp = o3d.io.write_triangle_mesh(path_tmp, mesh_scene)
 
         obj_mesh_all = None
+
+        cad_object_indices = []
 
         weights_dict = {'weight_sil': config.getfloat('weight_sil'),
                         'weight_depth': config.getfloat('weight_depth'),
@@ -132,7 +175,30 @@ def main(args):
                                                                                                       mesh_scene,
                                                                                                       scene_name,
                                                                                                       1,
-                                                                                                      [0])
+                                                                                                      [0],
+                                                                                                      # # 这类存在问题
+                                                                                                      img_height=int(config_general.getfloat('img_height')),
+                                                                                                      img_width=int(config_general.getfloat('img_height')),
+
+                                                                                                      # img_height=640,
+                                                                                                      # img_width=480
+                                                                                                      # 默认的的
+                                                                                                      # img_height=480,
+                                                                                                      # img_width=640
+                                                                                                      )
+            verts = mesh_obj.verts_packed().cpu().numpy()
+            faces = mesh_obj.faces_packed().cpu().numpy()
+
+            # 创建 Open3D TriangleMesh 对象
+            o3d_mesh = o3d.geometry.TriangleMesh()
+            o3d_mesh.vertices = o3d.utility.Vector3dVector(verts)
+            o3d_mesh.triangles = o3d.utility.Vector3iVector(faces)
+
+            # 保存为 PLY 文件
+            mesh_obj_path = os.path.join('/tmp', "mesh_obj.ply")
+            o3d.io.write_triangle_mesh(mesh_obj_path, o3d_mesh)
+            print(f"Saved mesh_obj to {mesh_obj_path}")
+
             cad_transformations, transform_dict = compose_cad_transforms(box_item,
                                                                          config.getstruct('rotations'),
                                                                          config.getint('num_scales'),
@@ -155,11 +221,20 @@ def main(args):
             obj_cluster_tree = ObjectClusterTree([box_item.category_label], config_mcss.cluster_tree,
                                                  config_mcss.montescene)
 
-            loss_list, obj_id_list, orientation_list, iteration_list, rot_45deg_list, transform_list, game = \
-                ret_obj.run_MCSS_search_refine(obj_cluster_tree,
-                                               config_mcss,
-                                               log_path,
-                                               depth_out_path)
+            print(f"--- [DEBUG] Starting MCTS for scene: {scene_name}, object_category: {box_item.category_label} ---")
+            # if box_item.category_label == 'chair':
+            #     continue
+            try:
+                loss_list, obj_id_list, orientation_list, iteration_list, rot_45deg_list, transform_list, game = \
+                    ret_obj.run_MCSS_search_refine(obj_cluster_tree,
+                                                   config_mcss,
+                                                   log_path,
+                                                   depth_out_path)
+            except Exception as e:
+                print(f"--- [DEBUG] Skip MCTS for scene: {scene_name}, object_category: {box_item.category_label} ---")
+                prepare_scene_obj.remove_obj_idx(box_item, indices_inst_seg)
+                continue
+                ## debug
 
             out_folder = os.path.join(out_path, str(count) + '_' + str(box_item.category_label))
             if not os.path.exists(out_folder):
@@ -247,6 +322,11 @@ def main(args):
                         obj_mesh_all = cad_model_o3d
                     else:
                         obj_mesh_all += cad_model_o3d
+                    from utils import SEMANTIC_IDX2NAME
+                    cad_object_indices.append(
+                        np.ones(np.array(cad_model_o3d.vertices).shape[0]) * fast_search_classes.index(
+                            box_item.category_label)
+                    )
 
             del ret_obj
             del cad_transformations, transform_dict
@@ -259,7 +339,18 @@ def main(args):
 
         # 仅输出所有
         if obj_mesh_all is not None:
-            tmp = o3d.io.write_triangle_mesh(os.path.join(out_path, scene_name + "_cad_retrieval.ply"), obj_mesh_all)
+            # CAD检索的点云
+            tmp = o3d.io.write_triangle_mesh(os.path.join(out_path, "cad_retrieval.ply"), obj_mesh_all)
+
+            # 保存要删除的index
+            np.savetxt(os.path.join(out_path, "original_object_index.txt"),
+                       prepare_scene_obj.all_obj_idx_list,
+                       fmt='%i')
+            # 保存CAD检索到的
+            cad_model_o3d = np.concatenate(cad_object_indices)
+            np.savetxt(os.path.join(out_path, "cad_object_label.txt"),
+                       cad_model_o3d,
+                       fmt='%i')
 
 
 if __name__ == "__main__":

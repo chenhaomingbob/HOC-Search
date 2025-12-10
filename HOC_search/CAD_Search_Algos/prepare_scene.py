@@ -36,26 +36,31 @@ class Prepare_Scene():
 
         dataset_name = self.config_general['dataset']
 
-        if self.data_split == '':
-            scene_list = os.listdir(os.path.join(base_path, self.config['data_folder']))
+        if dataset_name == 'ArkitScene':
+            scene_root = os.path.join(base_path, self.config['data_folder'])
+            scene_list = os.listdir(scene_root)
+            scene_list = [scene_name for scene_name in scene_list if
+                          os.path.isdir(os.path.join(scene_root, scene_name))]
         else:
-            if dataset_name == 'ScanNetpp':
-                data_split_path = os.path.join(scannetpp_base_path, 'ScanNetpp_splits', self.data_split)
+            if self.data_split == '':
+                scene_list = os.listdir(os.path.join(base_path, self.config['data_folder']))
             else:
-                print('data_splits only available for ScanNet dataset; current dataset: ' + str(dataset_name))
-                assert False
-            if not os.path.exists(data_split_path):
-                print('data_split file not found: ' + str(self.data_split))
-                assert False
-            text_file = open(data_split_path, "r")
-            scene_list_init = text_file.readlines()
-            scene_list = []
-            for scene_name in scene_list_init:
-                scene_name = scene_name.rstrip()
-                scene_list.append(scene_name)
+                if dataset_name == 'ScanNetpp':
+                    data_split_path = os.path.join(scannetpp_base_path, 'ScanNetpp_splits', self.data_split)
+                else:
+                    print('data_splits only available for ScanNet dataset; current dataset: ' + str(dataset_name))
+                    assert False
+                if not os.path.exists(data_split_path):
+                    print('data_split file not found: ' + str(self.data_split))
+                    assert False
+                text_file = open(data_split_path, "r")
+                scene_list_init = text_file.readlines()
+                scene_list = []
+                for scene_name in scene_list_init:
+                    scene_name = scene_name.rstrip()
+                    scene_list.append(scene_name)
 
         return scene_list
-
 
     def load_scene_list(self):
 
@@ -133,7 +138,6 @@ class Prepare_Scene():
 
     def prepare_GT_data(self, scene_mesh, mesh_bg, renderer, n_views, device):
         with torch.no_grad():
-
             scene_mesh = scene_mesh.extend(n_views * self.config.getint('batch_size') * 1)
 
             fragments_gt = renderer(meshes_world=scene_mesh.to(device))
@@ -304,8 +308,17 @@ class Prepare_Scene():
             mask_depth_valid_render_gt_tensor, \
             max_depth_gt, mesh_obj, depth_sensor, mask_depth_valid_sensor
 
+    def remove_obj_idx(self, box_item, indices_inst_seg):
+        # print(self.all_obj_idx_list)
+        indices_to_remove_set = set(indices_inst_seg)
+        self.all_obj_idx_list = [
+            idx for idx in self.all_obj_idx_list if idx not in indices_to_remove_set
+        ]
+
+        # print(self.all_obj_idx_list)
+
     def prepare_box_item_for_rendering_arkitscene(self, box_item, indices_inst_seg, mesh_scene, scene_name, num_scales,
-                                                  rotations):
+                                                  rotations, img_height, img_width):
 
         self.num_scales = num_scales
         self.rotations = rotations
@@ -347,9 +360,14 @@ class Prepare_Scene():
                                               'depth', str(depth_frame_name) + '.png')
 
             depth_img = load_depth_img(depth_img_path_new)
+            h, w = depth_img.shape
+            if h != img_height or w != img_width:
+                depth_img = cv2.resize(depth_img, (img_width, img_height), interpolation=cv2.INTER_NEAREST)
+
             depth_imgs.append(depth_img)
 
             depth_imgs_ary = np.asarray(depth_imgs)
+
             depth_imgs_ary = np.expand_dims(depth_imgs_ary, axis=1)
             depth_sensor = torch.from_numpy(depth_imgs_ary).to(self.device)
 
@@ -376,8 +394,11 @@ class Prepare_Scene():
                                                            self.config.getint('batch_size'),
                                                            1,
                                                            self.device,
-                                                           self.config_general.getfloat('img_height'),
-                                                           self.config_general.getfloat('img_width'))
+                                                           # self.config_general.getfloat('img_height'),
+                                                           # self.config_general.getfloat('img_width')
+                                                           img_height,
+                                                           img_width
+                                                           )
 
             depth_gt, depth_bg, mask_gt, mask_depth_valid_render_gt, mesh_bg = self.prepare_GT_data(scene_mesh,
                                                                                                     mesh_bg,
@@ -441,8 +462,11 @@ class Prepare_Scene():
                                        self.config.getint('batch_size'),
                                        len(self.rotations) * self.num_scales,
                                        self.device,
-                                       self.config_general.getfloat('img_height'),
-                                       self.config_general.getfloat('img_width'))
+                                       # self.config_general.getfloat('img_height'),
+                                       # self.config_general.getfloat('img_width')
+                                       img_height,
+                                       img_width
+                                       )
 
         return n_views, mesh_bg_tensor, renderer, depth_gt_tensor, depth_bg_tensor, mask_gt_tensor, \
             mask_depth_valid_render_gt_tensor, \

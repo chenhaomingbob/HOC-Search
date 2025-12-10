@@ -1,14 +1,20 @@
+import sys
+import os
+
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if project_root not in sys.path:
+    sys.path.append(project_root)
+
 import argparse
 from pathlib import Path
 from typing import Union
 import logging
 import numpy as np
 import open3d as o3d
-from preprocess_ScanNetpp import parse_cls_label,   parse_py3d_transform
+from preprocess_ScanNetpp import parse_cls_label, parse_py3d_transform
 from utils import transform_ScanNet_to_py3D, alignPclMesh, Rz, shapenet_category_dict
 from HOC_search.utils_CAD_retrieval import get_bdb_from_corners, get_corners_of_bb3d_no_index
 from HOC_search.ScanNetAnnotation import ScanNetAnnotation, ObjectAnnotation
-import os
 import pickle
 import torch
 from pytorch3d.structures import Meshes
@@ -25,13 +31,13 @@ import pytorch3d
 from pytorch3d.transforms import Transform3d
 from pytorch3d.renderer.cameras import PerspectiveCameras
 from pytorch3d.structures import Meshes
+
 # Setup
 if torch.cuda.is_available():
     device = torch.device("cuda:0")
     torch.cuda.set_device(device)
 else:
     device = torch.device("cpu")
-
 
 logging.basicConfig(level="INFO")
 logger = logging.getLogger('Preprocess ArkitScene')
@@ -443,10 +449,11 @@ CLASS_LABELS_200 = (
 )
 
 
-def view_selection_new_pose_arkit(scene_name, tmesh, frame_id_pose_dict, frame_id_intrinsic_dict, dist_params, img_scale, max_views,
-                            silhouette_thres, inst_label_list):
+def view_selection_new_pose_arkit(scene_name, tmesh, frame_id_pose_dict, frame_id_intrinsic_dict, dist_params,
+                                  img_scale, max_views,
+                                  silhouette_thres, inst_label_list):
     n_views = 1
-    height = 480. # 参考color
+    height = 480.  # 参考color
     width = 640.
 
     view_selection_dict = {}
@@ -469,7 +476,7 @@ def view_selection_new_pose_arkit(scene_name, tmesh, frame_id_pose_dict, frame_i
     )
     from tqdm import tqdm
     for frame_name, pose_dict in tqdm(frame_id_pose_dict.items()):
-        print(frame_name, len(frame_id_pose_dict))
+        # print(frame_name, len(frame_id_pose_dict))
         frame_name_list.append(frame_name)
         intrinsics = frame_id_intrinsic_dict[frame_name]
 
@@ -529,7 +536,7 @@ def view_selection_new_pose_arkit(scene_name, tmesh, frame_id_pose_dict, frame_i
         # # and finally destroy/close all open windows
         # cv2.destroyAllWindows()
         #
-        img_list.append(img) # 渲染图
+        img_list.append(img)  # 渲染图
 
     img_ary = np.asarray(img_list)
     # 遍历实例
@@ -563,6 +570,7 @@ def view_selection_new_pose_arkit(scene_name, tmesh, frame_id_pose_dict, frame_i
         view_selection_dict[int(label)] = view_params_dict
 
     return view_selection_dict
+
 
 def run(
         scene_dir: Union[str, Path],
@@ -656,7 +664,7 @@ def run(
         inst_shapenet_label_name = parse_cls_label(inst_scannet_label_name)
 
         # 根据类别过滤
-        if inst_shapenet_label_name is None:
+        if inst_shapenet_label_name is None or inst_shapenet_label_name not in shapenet_category_dict.keys():
             continue
         inst_id = i
         inst_label_map[inst_mask] = inst_id
@@ -691,7 +699,7 @@ def run(
         pkl_file.close()
     else:
         # parameters for view selection
-        img_scale = 1. # align rgb image and depth image
+        img_scale = 1.  # align rgb image and depth image
         # img_scale = .4
         max_views = 30
         silhouette_thres = 0.3
