@@ -57,47 +57,29 @@ process_single_workspace() {
 
     local cad_retrieval_dir="$workspace/intermediate/HOC_Search/CAD_retrieval"
     local success_flag_file="${cad_retrieval_dir}/cad_object_label.txt"
-    # voxel 文件夹路径
+    # voxel 路径
     local voxels_dir="${cad_retrieval_dir}/preprocessed_voxels_with_cad"
 
     # 初始化跳过标志 (0=不跳过/需重跑, 1=跳过/成功)
     local should_skip=0
     local skip_reason=""
 
-    # --- 增强的成功判定逻辑 ---
+    # 检查成功标志文件 'cad_object_label.txt' 是否存在
     if [ -f "$success_flag_file" ]; then
-        # 1. 检查 voxel 文件夹是否存在
-        if [ -d "$voxels_dir" ]; then
-            # 2. 统计文件夹内的文件数量 (不包含子目录)
-            local file_count=$(find "$voxels_dir" -maxdepth 1 -type f | wc -l)
-
-            # 3. 判断数量是否大于 5
-            if [ "$file_count" -gt 5 ]; then
-                should_skip=1
-                skip_reason="Label存在且Voxel文件数($file_count) > 5"
-            else
-                skip_reason="Voxel文件数量不足 (当前: $file_count, 需 > 5)"
-            fi
-        else
-            skip_reason="缺少 preprocessed_voxels_with_cad 文件夹"
-        fi
-    else
-        skip_reason="缺少 cad_object_label.txt 标志文件"
-    fi
-
-    # --- 1. 如果满足跳过条件，直接返回 (不打印耗时，不执行后续) ---
-    if [ "$should_skip" -eq 1 ]; then
-        echo "[GPU ${gpu_id}] [SKIP] 检测到完整成功标志 ($skip_reason)，跳过: $workspace"
+        # 如果文件存在，说明已经成功处理过，直接跳过
+        echo "[GPU ${gpu_id}] 检测到成功标志 '${success_flag_file##*/}'，跳过: $workspace"
         touch "$STATUS_DIR/$(basename "$workspace").success"
         return 0
     else
-        # 不满足条件，清理并重新运行
+        # 如果文件不存在，说明处理未完成或失败。
+        # 在重新处理之前，先删除旧的CAD_retrieval文件夹以清理环境。
         if [ -d "$cad_retrieval_dir" ]; then
-            echo "[GPU ${gpu_id}] [RE-RUN] 判定为未完成 ($skip_reason)。正在清理旧目录: $cad_retrieval_dir"
+            echo "[GPU ${gpu_id}] 未检测到成功标志。正在清理旧的目录: $cad_retrieval_dir"
             rm -rf "$cad_retrieval_dir"
         fi
     fi
 
+#    echo "[GPU ${gpu_id}] 开始处理工作区: $workspace"
     echo "$(date '+%Y-%m-%d %H:%M:%S') [GPU ${gpu_id}] 开始处理工作区: $workspace"
 
     local log_dir="$workspace/intermediate/HOC_Search/CAD_retrieval/logs"
@@ -106,23 +88,22 @@ process_single_workspace() {
 
     local scene_id=$(basename "$workspace")
 
+    # [MODIFIED] 使用从参数传入的 $CONFIG_FILE 变量
     python HOC_search/CAD_retrieval_HOC_search_ArkitScene.py \
         --config "$CONFIG_FILE" \
         --scene_id "$scene_id" > "$log_file" 2>&1
 
     local exit_code=$?
     local ws_duration=$((SECONDS - ws_start_time))
-
-    # --- 2. 只有在运行成功时，才打印耗时和成功标记 ---
     if [ $exit_code -eq 0 ]; then
+#        echo "[GPU ${gpu_id}] [SUCCESS] 成功处理: $workspace"
         echo "$(date '+%Y-%m-%d %H:%M:%S') [GPU ${gpu_id}] [SUCCESS] 成功处理: $workspace"
         touch "$STATUS_DIR/$(basename "$workspace").success"
-        # [MODIFIED] 耗时统计移入成功分支
-        printf "[GPU ${gpu_id}] --- 工作区 '%s' 处理耗时: %d 分 %d 秒 ---\n" "$(basename "$workspace")" $((ws_duration / 60)) $((ws_duration % 60))
     else
-        # [MODIFIED] 失败时仅打印错误提示，保持日志清爽
-        echo "$(date '+%Y-%m-%d %H:%M:%S') [GPU ${gpu_id}] [ERROR] 处理失败 (Exit Code: $exit_code): $workspace"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [GPU ${gpu_id}] [ERROR] 处理失败: $workspace"
+#        echo "[GPU ${gpu_id}] [ERROR] 处理失败: $workspace"
     fi
+    printf "[GPU ${gpu_id}] --- 工作区 '%s' 处理耗时: %d 分 %d 秒 ---\n" "$(basename "$workspace")" $((ws_duration / 60)) $((ws_duration % 60))
 }
 
 # [MODIFIED] 导出函数和需要的环境变量，包括新的 CONFIG_FILE

@@ -21,6 +21,8 @@ CUDA_VISIBLE_DEVICES=1 python CAD_retrieval_HOC_search_ArkitScene.py --config Ar
 # Step1
 bash ./scripts/batch_arkitscene_process.sh  /data1/chm/datasets/arkitscenes/LabelMaker/mini_data_v3
 bash ./scripts/batch_arkitscene_process.sh  /data1/chm/datasets/arkitscenes/LabelMaker/mini_data_v4
+
+bash ./scripts/batch_arkitscene_process.sh  /data1/chm/datasets/arkitscenes/LabelMaker/Training
 # Step2
 ## 先处理一下640x480的
 bash scripts/batch_arkitscene_cad_retrieval.sh /data1/chm/datasets/arkitscenes/LabelMaker/mini_data_v3
